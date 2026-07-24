@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/LiteCqrs.Net/LiteCqrs.Net.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/LiteCqrs.Net.Tests.DuplicateFixture/LiteCqrs.Net.Tests.DuplicateFixture.csproj" />
+    <Project Path="tests/LiteCqrs.Net.Tests/LiteCqrs.Net.Tests.csproj" />
+  </Folder>
+</Solution>

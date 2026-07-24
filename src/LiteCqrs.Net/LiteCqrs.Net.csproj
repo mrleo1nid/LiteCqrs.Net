@@ -1,0 +1,65 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      Multi-target: netstandard2.0 for maximum reach (.NET Framework 4.6.1+,
+      Mono, Unity, old runtimes) and net10.0 so modern consumers bind the
+      in-box BCL without polyfill shims.
+    -->
+    <TargetFrameworks>netstandard2.0;net10.0</TargetFrameworks>
+    <RootNamespace>LiteCqrs</RootNamespace>
+  </PropertyGroup>
+
+  <!-- NuGet package metadata -->
+  <PropertyGroup>
+    <PackageId>LiteCqrs.Net</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>Leonid Pershin</Authors>
+    <Description>
+      A lightweight CQRS-flavored in-process mediator for .NET — an explicit
+      Command/Query split (not MediatR's unified IRequest), a dynamic-free
+      cached dispatcher, ordered pipeline behaviors, notifications/pub-sub,
+      exception behaviors, and streaming requests.
+    </Description>
+    <PackageTags>cqrs;mediator;mediatr;commands;queries;pipeline;notifications;pubsub</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageProjectUrl>https://github.com/mrleo1nid/LiteCqrs.Net</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/mrleo1nid/LiteCqrs.Net</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <!-- Reproducible-ish: keep the package output under the repo-local feed. -->
+    <PackageOutputPath>$(MSBuildThisFileDirectory)..\..\artifacts</PackageOutputPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- DI wiring (AddLiteCqrs) — abstractions only, no container forced on consumers. -->
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="8.0.2" />
+    <!-- Behaviors.LoggingBehavior only — abstraction only, no concrete logging dependency forced. -->
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.2" />
+  </ItemGroup>
+
+  <!--
+    netstandard2.0 needs: IAsyncEnumerable<T> (Streaming) is netstandard2.1+,
+    so Microsoft.Bcl.AsyncInterfaces backports it; PolySharp synthesizes the
+    C# language polyfills (records/init, nullable attributes) the modern
+    source relies on. net10.0 has all of this in-box, so both are TFM-scoped.
+  -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.0'">
+    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="8.0.0" />
+    <PackageReference Include="PolySharp" Version="1.15.0">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="LiteCqrs.Net.Tests" />
+  </ItemGroup>
+
+</Project>

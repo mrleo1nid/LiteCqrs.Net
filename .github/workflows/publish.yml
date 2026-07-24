@@ -1,0 +1,155 @@
+name: Publish NuGet
+
+# Packs and pushes the library to NuGet.org when a version tag (v1.2.3) is
+# pushed. The package version is taken from the tag, so the csproj <Version>
+# stays as the dev default and releases are driven entirely by the tag.
+#
+# Auth uses NuGet Trusted Publishing (OIDC) — no long-lived API key secret.
+# One-time setup on nuget.org (Account -> Trusted Publishing): a policy for
+# owner "mrleo1nid", repository "LiteCqrs.Net", workflow "publish.yml", and
+# environment "NUGET_API_KEY" (must match the job's `environment:` below).
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Package version to publish (e.g. 1.2.3)'
+        required: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    # Must match the "Environment" field of the nuget.org trusted-publishing
+    # policy. GitHub auto-creates this environment on first use.
+    environment: NUGET_API_KEY
+    permissions:
+      # OIDC token for NuGet Trusted Publishing.
+      id-token: write
+      # Create the GitHub Release on tag pushes.
+      contents: write
+      # Publish to the repository's GitHub Packages feed.
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history + tags so the release notes can link a compare range
+          # against the previous version tag.
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Publishing version $VERSION"
+
+      - name: Restore
+        run: dotnet restore src/LiteCqrs.Net/LiteCqrs.Net.csproj
+
+      - name: Pack
+        run: >
+          dotnet pack src/LiteCqrs.Net/LiteCqrs.Net.csproj
+          --configuration Release
+          --no-restore
+          -p:Version=${{ steps.version.outputs.version }}
+          -p:ContinuousIntegrationBuild=true
+          --output ${{ github.workspace }}/nupkgs
+
+      - name: NuGet login (Trusted Publishing)
+        id: nuget-login
+        # Exchanges the GitHub OIDC token for a short-lived nuget.org API key
+        # via the trusted-publishing policy; nothing long-lived is stored.
+        uses: NuGet/login@v1
+        with:
+          # nuget.org account that owns the trusted-publishing policy.
+          user: mrleo1nid
+
+      - name: Push to NuGet
+        shell: bash
+        # Pushing the .nupkg also uploads the adjacent .snupkg symbols package
+        # to nuget.org. --skip-duplicate makes re-runs idempotent.
+        run: >
+          dotnet nuget push "${{ github.workspace }}/nupkgs/*.nupkg"
+          --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}"
+          --source https://api.nuget.org/v3/index.json
+          --skip-duplicate
+
+      - name: Push to GitHub Packages
+        shell: bash
+        # Also publish to the repo's GitHub Packages feed so the package shows
+        # up under the repository's "Packages". Uses the built-in GITHUB_TOKEN;
+        # the package links to this repo via <RepositoryUrl> in the csproj.
+        run: >
+          dotnet nuget push "${{ github.workspace }}/nupkgs/*.nupkg"
+          --api-key "${{ secrets.GITHUB_TOKEN }}"
+          --source https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json
+          --skip-duplicate
+
+      - name: Build release notes
+        id: notes
+        shell: bash
+        # Compose the release body: the CHANGELOG section for this version
+        # (falling back to the [Unreleased] section), plus footer links to the
+        # NuGet package, the compare range against the previous tag, and the
+        # full CHANGELOG.md.
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          CURRENT="v$VERSION"
+          REPO_URL="${{ github.server_url }}/${{ github.repository }}"
+
+          # Everything between "## [<label>]" and the next "## [" heading.
+          extract() {
+            awk -v ver="$1" '
+              BEGIN { start="## [" ver "]" }
+              substr($0,1,length(start))==start {flag=1; next}
+              flag && substr($0,1,4)=="## [" {exit}
+              flag {print}
+            ' CHANGELOG.md
+          }
+          BODY="$(extract "$VERSION")"
+          [ -n "$(printf '%s' "$BODY" | tr -d '[:space:]')" ] || BODY="$(extract 'Unreleased')"
+
+          # Nearest lower version tag (semver order) for the compare link.
+          PREV_TAG="$(git tag --sort=-v:refname \
+            | awk -v cur="$CURRENT" 'found{print;exit} $0==cur{found=1}')"
+
+          {
+            if [ -n "$(printf '%s' "$BODY" | tr -d '[:space:]')" ]; then
+              printf '%s\n' "$BODY"
+            else
+              echo "Release $CURRENT."
+            fi
+            echo
+            echo "---"
+            echo
+            echo "📦 **NuGet:** [LiteCqrs.Net $VERSION](https://www.nuget.org/packages/LiteCqrs.Net/$VERSION)"
+            if [ -n "$PREV_TAG" ]; then
+              echo "🔄 **Full changelog:** [\`$PREV_TAG...$CURRENT\`]($REPO_URL/compare/$PREV_TAG...$CURRENT)"
+            fi
+            echo "📄 **CHANGELOG:** [CHANGELOG.md]($REPO_URL/blob/$CURRENT/CHANGELOG.md)"
+          } > release-notes.md
+
+          echo "----- release-notes.md -----"
+          cat release-notes.md
+
+      - name: Create GitHub Release
+        # Only on real tag pushes — workflow_dispatch has no tag to release from.
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: v${{ steps.version.outputs.version }}
+          body_path: release-notes.md
+          files: |
+            ${{ github.workspace }}/nupkgs/*.nupkg
+            ${{ github.workspace }}/nupkgs/*.snupkg
